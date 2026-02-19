@@ -151,6 +151,12 @@ const App: React.FC = () => {
     };
     setGenerated(updated);
     saveToHistory(updated);
+    
+    // Notification WhatsApp automatique à l'admin
+    const message = `🚀 *Nouvelle Demande CV Express*%0A%0A👤 Nom : ${generated.userData.fullName}%0A📞 Tel Client : ${paymentPhone}%0A💸 Référence : ${transRef}%0A📄 Métier : ${generated.userData.job}`;
+    const waLink = `https://wa.me/229${ADMIN_PHONE}?text=${message}`;
+    window.open(waLink, '_blank');
+
     setPaymentSubStep('waiting_approval');
   };
 
@@ -261,7 +267,7 @@ const App: React.FC = () => {
             {[
               { name: "Amadou K.", role: "Ingénieur IT", text: "CV impeccable généré en un clin d'oeil. Très pro et adapté au Sénégal.", stars: 5 },
               { name: "Cynthia E.", role: "Marketeuse", text: "La lettre de motivation m'a aidée à décrocher mon stage à Abidjan.", stars: 5 },
-              { name: "Patrice M.", role: "Comptable", text: "Paiement MTN MoMo très fluide. Dossier validé en 10 minutes.", stars: 4 }
+              { name: "Patrice M.", role: "Comptable", text: "Paiement Celtis Cash très fluide. Dossier validé en 10 minutes.", stars: 4 }
             ].map((rev, i) => (
               <div key={i} className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-4 text-left hover:shadow-md transition-shadow">
                 <div className="flex gap-1">{[...Array(rev.stars)].map((_, j) => <Star key={j} className="w-4 h-4 fill-orange-500 text-orange-500" />)}</div>
@@ -298,10 +304,10 @@ const App: React.FC = () => {
             <div className="space-y-4">
               <p className="text-sm font-black text-slate-700 uppercase tracking-wide">Payer par Mobile Money :</p>
               <button onClick={() => setPaymentSubStep('momo_instructions')} className="w-full flex items-center justify-between p-5 md:p-6 border-2 border-orange-500 bg-orange-50 rounded-2xl group transition-all">
-                <div className="flex items-center gap-4"><Smartphone className="w-8 h-8 text-orange-500" /><span className="text-lg font-black text-orange-600">MTN MoMo</span></div>
+                <div className="flex items-center gap-4"><Smartphone className="w-8 h-8 text-orange-500" /><span className="text-lg font-black text-orange-600">Celtis Cash</span></div>
                 <ChevronRight className="w-6 h-6 text-orange-500" />
               </button>
-              <div className="bg-slate-50 p-4 rounded-xl text-[10px] font-bold text-slate-400 italic">MTN MoMo est notre canal de paiement exclusif pour garantir un déblocage manuel prioritaire.</div>
+              <div className="bg-slate-50 p-4 rounded-xl text-[10px] font-bold text-slate-400 italic">Celtis Cash est notre canal de paiement exclusif pour garantir un déblocage manuel prioritaire.</div>
             </div>
           </div>
         )}
@@ -309,7 +315,7 @@ const App: React.FC = () => {
           <div className="bg-white rounded-[2rem] md:rounded-[2.5rem] p-8 md:p-10 shadow-2xl border border-slate-100 space-y-8 animate-in zoom-in-95 duration-300">
             <button onClick={() => setPaymentSubStep('select')} className="flex items-center gap-2 text-slate-400 text-xs font-black hover:text-slate-600"><ChevronLeft className="w-4 h-4"/> Retour</button>
             <div className="space-y-4 text-center">
-               <h3 className="text-2xl font-black text-slate-900">Instructions MTN</h3>
+               <h3 className="text-2xl font-black text-slate-900">Instructions Celtis</h3>
                <p className="text-slate-500 text-sm font-medium">Envoyez <span className="font-black text-slate-900">2.000 FCFA</span> sur le numéro :</p>
                <div className="bg-slate-900 text-white p-5 md:p-6 rounded-3xl flex items-center justify-between group cursor-pointer" onClick={() => { navigator.clipboard.writeText(ADMIN_PHONE); alert("Copié !"); }}>
                   <div className="text-left"><p className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em] mb-1">Destinataire</p><p className="text-2xl md:text-3xl font-black tracking-widest">{ADMIN_PHONE}</p></div>
@@ -323,7 +329,7 @@ const App: React.FC = () => {
           <div className="bg-white rounded-[2rem] md:rounded-[2.5rem] p-8 md:p-10 shadow-2xl border border-slate-100 space-y-6 animate-in slide-in-from-right-4 duration-300">
              <h3 className="text-2xl font-black text-slate-900">Soumission</h3>
              <div className="space-y-4">
-                <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Votre numéro MTN</label><input type="tel" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 text-lg font-black outline-none focus:border-orange-500 transition-colors" value={paymentPhone} onChange={e => setPaymentPhone(e.target.value)} placeholder="Ex: 01020304" /></div>
+                <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Votre numéro Celtis</label><input type="tel" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 text-lg font-black outline-none focus:border-orange-500 transition-colors" value={paymentPhone} onChange={e => setPaymentPhone(e.target.value)} placeholder="Ex: 01020304" /></div>
                 <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">ID de Transaction</label><input type="text" className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 text-lg font-black outline-none focus:border-orange-500 transition-colors" value={transRef} onChange={e => setTransRef(e.target.value)} placeholder="Ex: TXN12345" /></div>
                 <button onClick={submitPaymentRef} className="w-full bg-orange-500 text-white py-4 md:py-5 rounded-2xl text-lg md:text-xl font-black shadow-lg">Valider mon paiement</button>
              </div>
@@ -430,7 +436,7 @@ const App: React.FC = () => {
       </div>
       <div className="space-y-6 max-w-3xl mx-auto text-left">
         {[
-          { q: "Comment débloquer mon pack ?", a: "Après le transfert MTN MoMo de 2.000 FCFA au +229 0193428416, soumettez votre ID de transaction. Un agent validera manuellement votre accès." },
+          { q: "Comment débloquer mon pack ?", a: "Après le transfert Celtis Cash de 2.000 FCFA au +229 0193428416, soumettez votre ID de transaction. Un agent validera manuellement votre accès." },
           { q: "Où s'affiche le code de déblocage ?", a: "Une fois votre paiement approuvé par nos agents, le code à 6 chiffres apparaîtra directement sur la carte de votre CV dans l'onglet 'Archives'." },
           { q: "Puis-je accéder à mon CV partout ?", a: "Oui, grâce à l'authentification sécurisée, connectez-vous avec votre email/tél et mot de passe depuis n'importe quel appareil." },
           { q: "Le code est-il permanent ?", a: "Chaque pack débloqué est accessible pendant 7 jours pour des raisons de sécurité. Pensez à exporter vos documents en PDF durant ce délai." }
@@ -563,7 +569,7 @@ const App: React.FC = () => {
              <span className="flex items-center gap-2 text-emerald-500 font-black"><ShieldCheck className="w-4 h-4" /> 100% Sécurisé</span>
           </div>
         </div>
-        <div className="mt-12 text-center text-[10px] text-slate-300 font-black tracking-widest uppercase">© 2024-2025 CV Express Afrique • MTN MoMo Exclusif</div>
+        <div className="mt-12 text-center text-[10px] text-slate-300 font-black tracking-widest uppercase">© 2024-2025 CV Express Afrique • Celtis Cash Exclusif</div>
       </footer>
     </div>
   );
