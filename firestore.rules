@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return false; } // Replace with true admin logic if needed
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCV(data) {
+      return data.keys().hasAll(['userId', 'date', 'userData', 'cv', 'letter', 'paid', 'status', 'template', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.userId == request.auth.uid
+        && data.date is string && data.date.size() <= 100
+        && data.userData is map
+        && data.cv is string
+        && data.letter is string
+        && data.paid is bool
+        && data.status is string && data.status.size() <= 50
+        && data.template is string && data.template.size() <= 50
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /cvs/{cvId} {
+      allow read: if isSignedIn() && existing().userId == request.auth.uid && isValidId(cvId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(cvId) && isValidCV(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidId(cvId) && isValidCV(incoming()) && incoming().userId == existing().userId && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid && isValidId(cvId);
+    }
+  }
+}

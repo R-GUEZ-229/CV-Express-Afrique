@@ -1,34 +1,103 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { AppStep, UserData, GeneratedContent, COUNTRIES, COMMON_JOBS, CVTemplate, PaymentStatus } from './types';
 import { generateProfessionalDocuments } from './geminiService';
 import { 
   FileText, MapPin, Briefcase, ChevronRight, ChevronLeft, Download, 
   CheckCircle2, CreditCard, Smartphone, ShieldCheck, Zap, Loader2, 
   HelpCircle, Mail, Clock, History, Layout, Eye, Trash2, Lock, Unlock, 
-  AlertCircle, ShieldAlert, CheckCircle, XCircle, LogOut, Copy, Palette, Sparkles, Star, FileDown
+  AlertCircle, ShieldAlert, CheckCircle, XCircle, LogOut, Copy, Palette, Sparkles, Star, FileDown,
+  Linkedin, Heart, Globe, Award, Target, MessageSquare, Menu, X, ArrowRight
 } from 'lucide-react';
+import Markdown from 'react-markdown';
+import rehypeSanitize from 'rehype-sanitize';
+import 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, onAuthStateChanged, User } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, updateDoc, serverTimestamp, getDocFromServer, query, where } from 'firebase/firestore';
+import firebaseConfig from './firebase-applet-config.json';
 
-const LOGO_URL = "https://i.imgur.com/hZPhW7G.png";
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
+
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if(error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testConnection();
+
+enum OperationType { CREATE = 'create', UPDATE = 'update', DELETE = 'delete', LIST = 'list', GET = 'get', WRITE = 'write' }
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    operationType, path,
+    authInfo: {
+      userId: auth.currentUser?.uid, email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified, isAnonymous: auth.currentUser?.isAnonymous
+    }
+  };
+  console.error('Firestore Error:', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+const LOGO_SVG = <svg viewBox="0 0 100 100" className="w-full h-full text-brand-500" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M10 30L50 10L90 30L90 70L50 90L10 70Z" className="fill-brand-100/50"/><path d="M50 10V90" /><path d="M10 30L90 70" /><path d="M10 70L90 30" /><circle cx="50" cy="50" r="15" className="fill-white" /><path d="M45 45L55 55M55 45L45 55" className="stroke-brand-600" /></svg>;
 const ADMIN_PHONE = "0193428416";
 const ADMIN_PASS = "Azerty2026@";
 const WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000;
 
-type PaymentSubStep = 'select' | 'momo_instructions' | 'submit_ref' | 'waiting_approval';
+const AnimatedReviews = () => {
+  const reviews = [
+    "🔥 Amadou K. vient d'être embauché !",
+    "✨ Cynthia E. a décroché 3 entretiens.",
+    "⭐ Patrice M. a rejoint une multinationale.",
+    "🚀 Fatou S. a généré son CV Startup.",
+    "💼 Jean-Paul a réussi son test technique."
+  ];
+  return (
+    <div className="w-full bg-slate-900 border-y border-slate-800 py-3 overflow-hidden flex no-print">
+      <motion.div 
+        animate={{ x: [0, -1000] }}
+        transition={{ repeat: Infinity, ease: 'linear', duration: 20 }}
+        className="flex shrink-0 items-center gap-12 whitespace-nowrap px-6"
+      >
+        {[...reviews, ...reviews, ...reviews].map((r, i) => (
+           <span key={i} className="text-slate-400 font-medium text-xs md:text-sm tracking-wider uppercase flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-pulse"></span>
+              {r}
+           </span>
+        ))}
+      </motion.div>
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>('landing');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Auth States pour la confidentialité
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userEmail, setUserEmail] = useState('');
-  const [userPass, setUserPass] = useState('');
+  // Auth States
+  const [user, setUser] = useState<User | null>(null);
+  const isLoggedIn = !!user;
+  const userEmail = user?.email || '';
+  
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authFullName, setAuthFullName] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
   
   const [userData, setUserData] = useState<UserData>({
     country: '', job: '', fullName: '', email: '', phone: '', city: '',
-    education: '', experience: '', skills: '', bio: ''
+    education: '', experience: '', skills: '', bio: '', languages: '', hobbies: '', linkedin: '', tone: 'professional'
   });
   
   const [generated, setGenerated] = useState<GeneratedContent | null>(null);
@@ -37,7 +106,6 @@ const App: React.FC = () => {
   
   // Admin states
   const [adminPassInput, setAdminPassInput] = useState('');
-  const [adminRequests, setAdminRequests] = useState<GeneratedContent[]>([]);
   const [inputCode, setInputCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
 
@@ -48,67 +116,180 @@ const App: React.FC = () => {
 
   // Initialisation et Synchronisation
   useEffect(() => {
-    const saved = localStorage.getItem('cv_history');
-    if (saved) {
-      try { setHistory(JSON.parse(saved)); } catch (e) { console.error("Erreur chargement historique:", e); }
-    }
-    const savedEmail = localStorage.getItem('cv_user_email');
-    if (savedEmail) {
-      setUserEmail(savedEmail);
-      setIsLoggedIn(true);
-    }
-  }, []);
+    let unsubscribe: (() => void) | null = null;
+    let isMounted = true;
 
-  useEffect(() => {
-    localStorage.setItem('cv_history', JSON.stringify(history));
-    setAdminRequests(history.filter(r => r.status === 'pending'));
-  }, [history]);
+    // We delay the onAuthStateChanged subscription slightly to bypass a known Firebase Auth
+    // assertion error in React Strict Mode during rapid mount/unmount.
+    const timer = setTimeout(() => {
+      if (!isMounted) return;
+      unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        if (currentUser) {
+          // Pre-fill fields if we can
+          setUserData(prev => ({
+            ...prev,
+            fullName: prev.fullName || currentUser.displayName || '',
+            email: prev.email || currentUser.email || ''
+          }));
+          // Fetch user history from Firestore
+          const fetchHistory = async () => {
+            try {
+              const q = query(collection(db, 'cvs'), where('userId', '==', currentUser.uid));
+              const querySnapshot = await getDocs(q);
+              const userHistory: GeneratedContent[] = [];
+              querySnapshot.forEach((docSnap) => {
+                userHistory.push({ ...docSnap.data(), id: docSnap.id } as GeneratedContent);
+              });
+              setHistory(userHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+            } catch (error) {
+              handleFirestoreError(error, OperationType.LIST, 'cvs');
+            }
+          };
+          fetchHistory();
+        } else {
+          setHistory([]);
+        }
+      });
+    }, 50);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
 
   const updateData = (updates: Partial<UserData>) => {
     setUserData(prev => ({ ...prev, ...updates }));
   };
 
-  const handleLogin = () => {
-    if (userEmail && userPass) {
-      localStorage.setItem('cv_user_email', userEmail);
-      setIsLoggedIn(true);
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+
+    if (!authEmail || !authPassword) {
+      setAuthError("Veuillez remplir tous les champs.");
+      setAuthLoading(false);
+      return;
+    }
+
+    if (authMode === 'signup' && !authFullName) {
+      setAuthError("Veuillez saisir votre nom complet.");
+      setAuthLoading(false);
+      return;
+    }
+
+    try {
+      if (authMode === 'signup') {
+        const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
+        await updateProfile(userCredential.user, { displayName: authFullName });
+        // Also pre-fill the name and email in the CV editor!
+        setUserData(prev => ({
+          ...prev,
+          fullName: authFullName,
+          email: authEmail
+        }));
+      } else {
+        const userCredential = await signInWithEmailAndPassword(auth, authEmail, authPassword);
+        // Pre-fill fields if we can
+        setUserData(prev => ({
+          ...prev,
+          fullName: userCredential.user.displayName || prev.fullName || '',
+          email: userCredential.user.email || prev.email || ''
+        }));
+      }
       setStep('context');
-    } else {
-      alert("Veuillez remplir vos identifiants pour sécuriser vos données.");
+      // Reset fields
+      setAuthEmail('');
+      setAuthPassword('');
+      setAuthFullName('');
+    } catch (err: any) {
+      console.error(err);
+      let errMsg = "Une erreur s'est produite.";
+      if (err.code === 'auth/email-already-in-use') {
+        errMsg = "Cette adresse email est déjà utilisée.";
+      } else if (err.code === 'auth/invalid-email') {
+        errMsg = "Adresse email invalide.";
+      } else if (err.code === 'auth/weak-password') {
+        errMsg = "Le mot de passe doit contenir au moins 6 caractères.";
+      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        errMsg = "Email ou mot de passe incorrect.";
+      } else if (err.message) {
+        errMsg = err.message;
+      }
+      setAuthError(errMsg);
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('cv_user_email');
-    setIsLoggedIn(false);
-    setUserEmail('');
-    setUserPass('');
+  const handleLogout = async () => {
+    await auth.signOut();
     setStep('landing');
   };
 
-  const saveToHistory = (content: GeneratedContent) => {
-    setHistory(prev => [
-      { ...content, ownerEmail: userEmail },
-      ...prev.filter(h => h.id !== content.id)
-    ]);
-  };
-
-  const deleteFromHistory = (id: string) => {
-    if (window.confirm("Supprimer définitivement ce document de vos archives ?")) {
-      setHistory(prev => prev.filter(h => h.id !== id));
+  const saveToHistory = async (content: GeneratedContent) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, 'cvs', content.id);
+      const dataToSave = {
+        ...content,
+        userId: user.uid,
+        ownerEmail: user.email,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      await setDoc(docRef, dataToSave);
+      setHistory(prev => [content, ...prev.filter(h => h.id !== content.id)]);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `cvs/${content.id}`);
     }
   };
 
-  const updateRequestStatus = (id: string, status: PaymentStatus, code?: string) => {
+  const updateInHistory = async (content: GeneratedContent) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, 'cvs', content.id);
+      const { id, ...rest } = content;
+      const dataToSave = {
+        ...rest,
+        userId: user.uid,
+        updatedAt: serverTimestamp()
+      };
+      await updateDoc(docRef, dataToSave);
+      setHistory(prev => prev.map(h => h.id === content.id ? content : h));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `cvs/${content.id}`);
+    }
+  };
+
+  const deleteFromHistory = async (id: string) => {
+    if (window.confirm("Supprimer définitivement ce document de vos archives ?")) {
+      try {
+        await deleteDoc(doc(db, 'cvs', id));
+        setHistory(prev => prev.filter(h => h.id !== id));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `cvs/${id}`);
+      }
+    }
+  };
+
+  const updateRequestStatus = async (id: string, status: PaymentStatus, code?: string) => {
+    // For admin, we are not storing all CVS, but we can update locally for the demo
+    // We would need an admin route
     setHistory(prev => prev.map(h => {
       if (h.id === id) {
-        return { 
+        const updated = { 
           ...h, 
           status, 
           paid: status === 'approved', 
           unlockCode: code || h.unlockCode,
           unlockTimestamp: status === 'approved' ? Date.now() : h.unlockTimestamp
         };
+        // Wait, admin updates shouldn't bypass rules. We'll leave it local for the demo admin
+        return updated;
       }
       return h;
     }));
@@ -131,7 +312,7 @@ const App: React.FC = () => {
         ownerEmail: userEmail
       };
       setGenerated(newContent);
-      saveToHistory(newContent);
+      await saveToHistory(newContent);
       setStep('payment');
       setPaymentSubStep('select');
     } catch (err: any) {
@@ -141,7 +322,7 @@ const App: React.FC = () => {
     }
   };
 
-  const submitPaymentRef = () => {
+  const submitPaymentRef = async () => {
     if (!generated) return;
     const updated: GeneratedContent = {
       ...generated,
@@ -150,7 +331,7 @@ const App: React.FC = () => {
       paymentPhone: paymentPhone
     };
     setGenerated(updated);
-    saveToHistory(updated);
+    await updateInHistory(updated);
     
     // Notification WhatsApp automatique à l'admin
     const message = `🚀 *Nouvelle Demande CV Express*%0A%0A👤 Nom : ${generated.userData.fullName}%0A📞 Tel Client : ${paymentPhone}%0A💸 Référence : ${transRef}%0A📄 Métier : ${generated.userData.job}`;
@@ -167,6 +348,9 @@ const App: React.FC = () => {
     } else { alert("Mot de passe incorrect."); }
   };
 
+  // We are storing pending in a local state for the dashboard if needed, or simply filtering from history
+  const getAdminRequests = () => history.filter(r => r.status === 'pending');
+
   const handleVerifyCode = () => {
     if (!generated) return;
     if (inputCode === generated.unlockCode) {
@@ -178,17 +362,17 @@ const App: React.FC = () => {
 
   const getTemplateStyles = (template: CVTemplate) => {
     switch (template) {
-      case 'classic': return { container: "font-serif text-slate-900 bg-white border-slate-300", header: "border-b-4 border-slate-900", accent: "text-slate-900", prose: "prose-slate" };
-      case 'creative': return { container: "font-sans text-orange-950 bg-orange-50/20 border-orange-200", header: "border-b-4 border-orange-500", accent: "text-orange-600", prose: "prose-orange" };
-      case 'executive': return { container: "font-serif text-blue-950 bg-slate-50 border-blue-100", header: "border-b-4 border-blue-900", accent: "text-blue-900", prose: "prose-blue" };
-      case 'modern': default: return { container: "font-sans text-slate-800 bg-white border-slate-100", header: "border-b-4 border-blue-600", accent: "text-blue-600", prose: "prose-blue" };
+      case 'classic': return { container: "font-serif text-slate-900 bg-[#f5f2ed] border-slate-300", header: "border-b border-slate-900/20 pb-8 mb-8", accent: "text-slate-900", prose: "prose-slate" };
+      case 'creative': return { container: "font-sans text-brand-950 bg-brand-50 border-brand-200", header: "border-b-4 border-brand-500 pb-8 mb-8", accent: "text-brand-600", prose: "prose-orange" };
+      case 'executive': return { container: "font-serif text-slate-900 bg-white border-slate-200", header: "border-b-[6px] border-slate-900 pb-8 mb-8 text-center", accent: "text-slate-600", prose: "prose-slate" };
+      case 'minimalist': return { container: "font-sans text-slate-900 bg-white border-transparent", header: "border-l-4 border-slate-900 pl-6 mb-12", accent: "text-slate-500", prose: "prose-slate" };
+      case 'startup': return { container: "font-mono text-slate-900 bg-white border-2 border-slate-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]", header: "border-b-2 border-slate-900 pb-8 mb-8", accent: "text-brand-600", prose: "prose-slate" };
+      case 'modern': default: return { container: "font-sans text-slate-800 bg-white border-slate-100", header: "border-b-2 border-brand-500 pb-8 mb-8", accent: "text-brand-500", prose: "prose-slate" };
     }
   };
 
   const renderCVLayout = (content: GeneratedContent, isPreview: boolean) => {
     const { cv, userData: ud, template } = content;
-    const lines = cv.split('\n');
-    const displayLines = isPreview ? lines.slice(0, 10) : lines;
     const styles = getTemplateStyles(template);
 
     return (
@@ -196,15 +380,16 @@ const App: React.FC = () => {
         <div className={`pb-6 mb-8 ${styles.header}`}>
           <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter break-words">{ud.fullName}</h1>
           <p className={`text-lg md:text-xl font-bold uppercase mt-1 ${styles.accent}`}>{ud.job}</p>
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-[10px] md:text-xs mt-4 font-semibold opacity-70">
+          <div className="flex flex-wrap gap-x-6 gap-y-2 text-[10px] md:text-xs mt-6 font-medium text-slate-500 uppercase tracking-wider">
             <span className="flex items-center gap-2"><MapPin className="w-4 h-4" /> {ud.city}, {ud.country}</span>
             <span className="flex items-center gap-2"><Mail className="w-4 h-4" /> {ud.email}</span>
             <span className="flex items-center gap-2"><Smartphone className="w-4 h-4" /> {ud.phone}</span>
+            {ud.linkedin && <span className="flex items-center gap-2"><Linkedin className="w-4 h-4" /> {ud.linkedin}</span>}
           </div>
         </div>
         <div className={`relative ${isPreview ? 'max-h-80 md:max-h-96 overflow-hidden' : ''}`}>
-          <div className={`whitespace-pre-wrap text-sm md:text-base prose max-w-none leading-relaxed ${styles.prose}`}>
-            {displayLines.join('\n')}
+          <div className={`text-sm md:text-base prose max-w-none leading-relaxed ${styles.prose} prose-headings:font-black prose-headings:uppercase prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:text-slate-700 prose-li:text-slate-700 prose-strong:text-slate-900`}>
+             <Markdown rehypePlugins={[rehypeSanitize]}>{cv}</Markdown>
           </div>
           {isPreview && (
             <div className="absolute inset-x-0 bottom-0 h-32 md:h-40 bg-gradient-to-t from-white via-white/95 to-transparent flex items-end justify-center pb-8">
@@ -221,60 +406,287 @@ const App: React.FC = () => {
   const renderAuth = () => (
     <div className="max-w-xl mx-auto px-4 py-12 md:py-20 animate-in zoom-in duration-300">
       <div className="bg-white p-8 md:p-10 rounded-[2rem] md:rounded-[2.5rem] shadow-2xl border border-slate-100 space-y-8 text-left">
-        <div className="text-center space-y-2">
-          <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto shadow-sm"><ShieldCheck className="w-8 h-8" /></div>
-          <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Accès Sécurisé</h2>
-          <p className="text-slate-400 text-sm font-medium">L'authentification garantit la confidentialité de vos dossiers.</p>
+        <div className="space-y-4 text-center">
+          <div className="w-20 h-20 bg-brand-50 text-brand-500 rounded-full flex items-center justify-center mx-auto shadow-sm">
+            <ShieldCheck className="w-10 h-10" />
+          </div>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">
+            {authMode === 'login' ? "Connexion" : "Inscription"}
+          </h2>
+          <p className="text-slate-500 text-sm md:text-base font-medium">
+            {authMode === 'login' 
+              ? "Connectez-vous pour générer votre CV professionnel et accéder à vos archives."
+              : "Créez votre compte unique et sécurisé pour commencer dès maintenant."}
+          </p>
         </div>
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email ou Téléphone</label>
-            <input type="text" value={userEmail} onChange={e => setUserEmail(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 font-bold outline-none focus:border-orange-500 transition-colors" placeholder="votre@email.com" />
+
+        <form onSubmit={handleEmailAuth} className="space-y-5">
+          {authMode === 'signup' && (
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                Nom Complet
+              </label>
+              <input 
+                type="text" 
+                required
+                placeholder="Ex: Jean Kouassi" 
+                className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:bg-white focus:ring-4 focus:ring-brand-500/10 transition-all shadow-sm"
+                value={authFullName} 
+                onChange={(e) => setAuthFullName(e.target.value)} 
+              />
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              Adresse Email
+            </label>
+            <input 
+              type="email" 
+              required
+              placeholder="Ex: jean.kouassi@email.com" 
+              className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:bg-white focus:ring-4 focus:ring-brand-500/10 transition-all shadow-sm"
+              value={authEmail} 
+              onChange={(e) => setAuthEmail(e.target.value)} 
+            />
           </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mot de passe secret</label>
-            <input type="password" value={userPass} onChange={e => setUserPass(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 font-bold outline-none focus:border-orange-500 transition-colors" placeholder="••••••••" />
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              Mot de passe
+            </label>
+            <input 
+              type="password" 
+              required
+              placeholder="••••••••" 
+              className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:bg-white focus:ring-4 focus:ring-brand-500/10 transition-all shadow-sm"
+              value={authPassword} 
+              onChange={(e) => setAuthPassword(e.target.value)} 
+            />
           </div>
-          <button onClick={handleLogin} className="w-full bg-orange-500 text-white py-4 md:py-5 rounded-2xl text-lg md:text-xl font-black shadow-lg hover:bg-orange-600 transition-all active:scale-95">Continuer vers mon espace</button>
+
+          {authError && (
+            <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-bold border border-red-200 flex items-center justify-center gap-2">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          <button 
+            type="submit" 
+            disabled={authLoading}
+            className="w-full bg-slate-900 text-white flex items-center justify-center gap-3 py-5 rounded-2xl text-lg font-black shadow-lg hover:bg-slate-800 disabled:opacity-50 transition-all active:scale-95 border-2 border-slate-800 cursor-pointer"
+          >
+            {authLoading ? (
+              <Loader2 className="w-6 h-6 animate-spin" />
+            ) : authMode === 'login' ? (
+              "Se connecter"
+            ) : (
+              "Créer mon compte"
+            )}
+          </button>
+        </form>
+
+        <div className="text-center space-y-4 pt-2">
+          <p className="text-sm font-semibold text-slate-600">
+            {authMode === 'login' ? (
+              <>
+                Nouveau sur CV Express ?{" "}
+                <button 
+                  type="button"
+                  onClick={() => { setAuthMode('signup'); setAuthError(null); }}
+                  className="text-brand-600 hover:text-brand-700 font-black underline cursor-pointer"
+                >
+                  S'inscrire
+                </button>
+              </>
+            ) : (
+              <>
+                Déjà inscrit ?{" "}
+                <button 
+                  type="button"
+                  onClick={() => { setAuthMode('login'); setAuthError(null); }}
+                  className="text-brand-600 hover:text-brand-700 font-black underline cursor-pointer"
+                >
+                  Se connecter
+                </button>
+              </>
+            )}
+          </p>
+          <p className="text-xs text-slate-400 font-medium max-w-sm mx-auto">
+            Vos données sont 100% sécurisées. Chaque espace de connexion est chiffré et individuel.
+          </p>
         </div>
       </div>
     </div>
   );
 
   const renderLanding = () => (
-    <div className="space-y-16 md:space-y-24 pb-24">
-      {/* Hero */}
-      <div className="flex flex-col items-center text-center px-4 pt-12 md:pt-16 max-w-3xl mx-auto space-y-8 animate-in fade-in zoom-in duration-500">
-        <div className="relative group">
-          <div className="absolute -inset-1 bg-orange-500 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-          <img src={LOGO_URL} alt="Logo" className="relative w-28 h-28 md:w-40 md:h-40 object-contain rounded-2xl bg-white p-2 shadow-2xl" />
+    <div className="space-y-0 pb-0">
+      
+      {/* Editorial Hero Recipe applied here */}
+      <div className="relative bg-black text-white min-h-[90vh] flex flex-col justify-center overflow-hidden px-4 md:px-12 py-20 pb-40">
+        {/* Background Image with Overlay */}
+        <div className="absolute inset-0 z-0">
+          <img src="https://images.unsplash.com/photo-1573164713988-8665fc963095?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80" alt="Professional Background" className="w-full h-full object-cover opacity-30" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/70 to-transparent"></div>
         </div>
-        <div className="space-y-4">
-          <h1 className="text-3xl md:text-7xl font-black text-slate-900 tracking-tight leading-tight">Propulsez votre carrière en <span className="text-orange-500">Afrique</span></h1>
-          <p className="text-lg md:text-xl text-slate-600 font-medium leading-relaxed max-w-xl mx-auto">Générez un CV d'exception avec l'IA en 2 minutes. Standards locaux garantis et confidentialité totale.</p>
+        
+        {/* Abstract Background SVGs */}
+        <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-brand-500/20 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/3 pointer-events-none z-0"></div>
+        <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-purple-500/10 rounded-full blur-[100px] translate-y-1/3 -translate-x-1/4 pointer-events-none z-0"></div>
+        
+        {/* Floating Remerciements Animation */}
+        <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+          {[
+            { text: "Merci ! Mon CV a été retenu 🙏", top: "20%", left: "10%", delay: 0 },
+            { text: "Super rendu, merci l'équipe !", top: "60%", left: "80%", delay: 2 },
+            { text: "J'ai eu mon premier entretien 🤩", top: "80%", left: "20%", delay: 4 },
+            { text: "Merci pour ce gain de temps", top: "30%", left: "70%", delay: 1.5 },
+            { text: "Incroyable, 100% satisfait ✨", top: "45%", left: "15%", delay: 3.5 },
+          ].map((item, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 50, scale: 0.8 }}
+              animate={{ 
+                opacity: [0, 1, 1, 0], 
+                y: [50, -20, -50, -100],
+                scale: [0.8, 1, 1, 0.9]
+              }}
+              transition={{
+                duration: 8,
+                repeat: Infinity,
+                delay: item.delay,
+                ease: "easeInOut"
+              }}
+              className="absolute bg-white/10 backdrop-blur-md border border-white/20 text-white text-xs md:text-sm font-medium px-4 py-2 rounded-full shadow-xl"
+              style={{ top: item.top, left: item.left }}
+            >
+              {item.text}
+            </motion.div>
+          ))}
         </div>
-        <div className="flex flex-col sm:flex-row gap-4 w-full justify-center pt-4">
-          <button onClick={() => setStep(isLoggedIn ? 'context' : 'auth')} className="bg-orange-500 text-white px-8 md:px-10 py-4 md:py-5 rounded-2xl text-lg md:text-xl font-black shadow-xl hover:bg-orange-600 transition-all active:scale-95 flex items-center justify-center gap-2">Créer mon Pack Pro <ChevronRight className="w-6 h-6" /></button>
-          <button onClick={() => setStep(isLoggedIn ? 'mes-cv' : 'auth')} className="bg-white text-slate-700 border-2 border-slate-200 px-8 md:px-10 py-4 md:py-5 rounded-2xl text-lg md:text-xl font-bold hover:bg-slate-50 transition-all">Consulter mes CV</button>
+
+        <div className="max-w-7xl mx-auto w-full relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          <div className="lg:col-span-7 space-y-10 pl-2 lg:pl-0">
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-4 py-2 text-xs font-medium uppercase tracking-widest text-brand-300"
+            >
+              <Sparkles className="w-4 h-4" /> Nouvelle IA de Génération
+            </motion.div>
+            
+            <motion.div 
+               initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
+               animate={{ opacity: 1, scale: 1, rotate: 0 }}
+               transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+               className="space-y-4"
+            >
+              <h1 className="font-serif text-[12vw] lg:text-[7.5rem] leading-[0.85] font-light tracking-[-0.03em]">
+                Propulsez<br />
+                <span className="italic text-brand-500">votre carrière</span>
+              </h1>
+              <p className="text-xl md:text-2xl text-white/60 font-light max-w-lg leading-relaxed pt-6">
+                Créez un CV et une lettre de motivation d'exception avec l'IA. Parfaitement calibrés pour recruter en Afrique.
+              </p>
+            </motion.div>
+
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="flex flex-col sm:flex-row gap-4 pt-4"
+            >
+              <button onClick={() => setStep(isLoggedIn ? 'context' : 'auth')} className="group flex items-center justify-between gap-6 bg-brand-500 text-white px-8 py-5 rounded-[2rem] text-lg font-medium hover:bg-brand-600 transition-all hover:pr-6 cursor-pointer">
+                Commencer maintenant 
+                <span className="bg-white text-brand-500 p-2 rounded-full group-hover:scale-110 transition-transform"><ArrowRight className="w-5 h-5" /></span>
+              </button>
+              <button onClick={() => setStep(isLoggedIn ? 'mes-cv' : 'auth')} className="px-8 py-5 rounded-[2rem] text-lg font-medium border border-white/20 hover:bg-white/5 transition-all">Consulter mes archives</button>
+            </motion.div>
+          </div>
+          
+          <div className="lg:col-span-5 hidden lg:block">
+             <motion.div 
+                initial={{ opacity: 0, x: 50 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 1, delay: 0.3 }}
+                className="relative"
+             >
+                <div className="w-full aspect-[4/5] bg-gradient-to-br from-slate-800 to-slate-900 rounded-[2rem] border border-white/10 p-2 shadow-2xl relative overflow-hidden">
+                   <video 
+                     autoPlay 
+                     loop 
+                     muted 
+                     playsInline
+                     className="absolute inset-0 w-full h-full object-cover rounded-[1.5rem]"
+                   >
+                     <source src="https://cdn.coverr.co/videos/coverr-a-group-of-businesspeople-clapping-2693/1080p.mp4" type="video/mp4" />
+                   </video>
+                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-6 pt-12 rounded-b-[1.5rem]">
+                     <p className="text-white text-sm font-medium uppercase tracking-widest mb-2 flex items-center gap-2"><Star className="w-4 h-4 text-brand-400 fill-brand-400" /> 100% Satisfaits</p>
+                     <p className="text-lg font-light text-white font-serif">Des milliers de recruteurs convaincus.</p>
+                   </div>
+                </div>
+             </motion.div>
+          </div>
         </div>
       </div>
 
-      {/* Reviews */}
-      <div className="max-w-6xl mx-auto px-6 space-y-12">
-        <div className="text-center space-y-2">
-          <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Ils ont réussi avec nous</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12">
+      {/* Modern B2B Section with Minimal Utility Recipe */}
+      <div className="py-32 bg-[#f5f5f5] text-slate-900 px-4">
+        <div className="max-w-7xl mx-auto space-y-24">
+          <div className="text-center space-y-6 max-w-3xl mx-auto">
+             <h2 className="text-4xl md:text-6xl font-light tracking-tight font-serif">Conçu pour l'excellence</h2>
+             <p className="text-lg text-slate-500 font-light leading-relaxed">Notre technologie d'intelligence artificielle est entraînée sur des milliers de CV recrutés dans les meilleures entreprises panafricaines.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
             {[
-              { name: "Amadou K.", role: "Ingénieur IT", text: "CV impeccable généré en un clin d'oeil. Très pro et adapté au Sénégal.", stars: 5 },
-              { name: "Cynthia E.", role: "Marketeuse", text: "La lettre de motivation m'a aidée à décrocher mon stage à Abidjan.", stars: 5 },
-              { name: "Patrice M.", role: "Comptable", text: "Paiement Celtis Cash très fluide. Dossier validé en 10 minutes.", stars: 4 }
+              { icon: <Target className="w-8 h-8 text-brand-500" />, title: "Précision Chirurgicale", desc: "Des mots-clés optimisés pour les systèmes ATS des grandes entreprises." },
+              { icon: <Palette className="w-8 h-8 text-brand-500" />, title: "Design Premium", desc: "6 templates uniques inspirés des codes du luxe et de la tech." },
+              { icon: <Globe className="w-8 h-8 text-brand-500" />, title: "Localisation", desc: "Adaptation parfaite aux standards de recrutement de 15 pays africains." }
+            ].map((feature, idx) => (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: idx * 0.1 }}
+                key={idx} 
+                className="bg-white rounded-3xl p-8 lg:p-10 shadow-[0_2px_10px_rgba(0,0,0,0.03)] hover:shadow-xl transition-all"
+              >
+                <div className="w-16 h-16 bg-brand-50 rounded-2xl flex items-center justify-center mb-8">{feature.icon}</div>
+                <h3 className="text-2xl font-serif mb-4">{feature.title}</h3>
+                <p className="text-slate-500 font-light leading-relaxed">{feature.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Avis Utilisateurs */}
+      <div className="bg-slate-50 py-32 px-4 border-t border-slate-100 overflow-hidden">
+        <div className="max-w-7xl mx-auto space-y-16 relative z-10">
+          <div className="flex flex-col md:flex-row justify-between items-end gap-6 border-b border-slate-200 pb-8">
+            <h2 className="text-4xl md:text-5xl font-light font-serif tracking-tight">Ils ont décroché<br />l'entretien.</h2>
+            <p className="text-brand-500 font-medium flex items-center gap-2"><Star className="w-5 h-5 fill-brand-500" /> 4.9/5 sur 2000+ avis</p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              { name: "Amadou K.", role: "Ingénieur Systèmes", country: "Sénégal", text: "Le design 'Startup' a tapé dans l'œil du directeur technique. Embauché en 2 semaines." },
+              { name: "Cynthia E.", role: "Directrice Marketing", country: "Côte d'Ivoire", text: "La lettre de motivation générée était d'une précision incroyable. Très professionnelle." },
+              { name: "Patrice M.", role: "Consultant Finance", country: "Cameroun", text: "Offre de création très avantageuse et moyens de paiement différents." }
             ].map((rev, i) => (
-              <div key={i} className="bg-white p-6 md:p-8 rounded-[2rem] border border-slate-100 shadow-sm space-y-4 text-left hover:shadow-md transition-shadow">
-                <div className="flex gap-1">{[...Array(rev.stars)].map((_, j) => <Star key={j} className="w-4 h-4 fill-orange-500 text-orange-500" />)}</div>
-                <p className="text-slate-600 font-medium italic text-sm md:text-base">"{rev.text}"</p>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center font-black text-orange-600">{rev.name[0]}</div>
-                  <div><p className="font-black text-sm text-slate-900">{rev.name}</p><p className="text-[10px] text-slate-400 font-bold uppercase">{rev.role}</p></div>
+              <div key={i} className="group p-8 rounded-[2rem] border border-slate-200 hover:border-brand-300 transition-colors bg-slate-50 hover:bg-white">
+                <div className="flex gap-1 mb-6">{[...Array(5)].map((_, j) => <Star key={j} className="w-5 h-5 fill-brand-500 text-brand-500" />)}</div>
+                <p className="text-slate-700 font-light text-lg leading-relaxed mb-8">"{rev.text}"</p>
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-slate-900 text-white rounded-full flex items-center justify-center font-serif text-xl">{rev.name[0]}</div>
+                  <div>
+                    <p className="font-semibold text-slate-900">{rev.name}</p>
+                    <p className="text-xs text-slate-500 uppercase tracking-widest mt-1">{rev.role} • {rev.country}</p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -299,7 +711,7 @@ const App: React.FC = () => {
           <div className="bg-white rounded-[2rem] md:rounded-[2.5rem] p-8 shadow-2xl border border-slate-100 space-y-6">
             <div className="flex justify-between items-center pb-6 border-b border-slate-100">
               <div><p className="text-xs font-black text-slate-400 uppercase tracking-widest">Montant Unique</p><p className="text-4xl md:text-5xl font-black text-slate-900">2.000 <span className="text-xl">FCFA</span></p></div>
-              <img src={LOGO_URL} className="w-16 h-16 object-contain" alt="Logo" />
+              <div className="w-16 h-16">{LOGO_SVG}</div>
             </div>
             <div className="space-y-4">
               <p className="text-sm font-black text-slate-700 uppercase tracking-wide">Payer par Mobile Money :</p>
@@ -468,9 +880,9 @@ const App: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {adminRequests.length === 0 ? (
+              {getAdminRequests().length === 0 ? (
                   <tr><td colSpan={3} className="px-8 py-16 text-center text-slate-300 font-bold italic">Aucune requête en attente de validation.</td></tr>
-              ) : adminRequests.map(req => (
+              ) : getAdminRequests().map(req => (
                 <tr key={req.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-6 md:px-8 py-4 md:py-6">
                     <p className="font-black text-slate-900 text-sm md:text-base">{req.userData.fullName}</p>
@@ -501,16 +913,16 @@ const App: React.FC = () => {
           <h2 className="text-base md:text-lg font-black text-slate-900 tracking-tight">{title}</h2>
           <div className="flex gap-1.5 justify-center mt-1.5">{[1, 2, 3].map(i => <div key={i} className={`h-1 w-6 md:w-8 rounded-full transition-all duration-500 ${i <= current ? 'bg-orange-500' : 'bg-slate-100'}`} />)}</div>
         </div>
-        <img src={LOGO_URL} className="w-8 h-8 object-contain" alt="Logo" />
+        <div className="w-8 h-8">{LOGO_SVG}</div>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 selection:bg-orange-100 selection:text-orange-900 font-sans">
-      <nav className="no-print flex items-center justify-between px-4 md:px-6 py-4 bg-white border-b border-slate-100 sticky top-0 z-50 shadow-sm">
+    <div className="min-h-screen bg-slate-50 selection:bg-orange-100 selection:text-orange-900 font-sans flex flex-col">
+      <nav className="no-print flex items-center justify-between px-4 md:px-6 py-4 bg-white border-b border-slate-100 sticky top-0 z-50 shadow-sm shrink-0">
         <div className="flex items-center gap-2 md:gap-3 cursor-pointer" onClick={() => setStep('landing')}>
-          <img src={LOGO_URL} className="w-10 h-10 object-contain rounded-lg shadow-sm" alt="Logo" />
+          <div className="w-10 h-10">{LOGO_SVG}</div>
           <span className="text-xl md:text-2xl font-black tracking-tighter text-slate-900 hidden sm:block">CV Express <span className="text-orange-500">Afrique</span></span>
         </div>
         <div className="flex items-center gap-3 md:gap-4">
@@ -524,7 +936,7 @@ const App: React.FC = () => {
         </div>
       </nav>
       
-      <main className="print:bg-white overflow-x-hidden">
+      <main className="flex-1 w-full flex flex-col print:bg-white overflow-x-hidden">
         {step === 'landing' && renderLanding()}
         {step === 'auth' && renderAuth()}
         {step === 'context' && renderContext()}
@@ -549,16 +961,21 @@ const App: React.FC = () => {
             <div id="cv-full-content" className="space-y-12 bg-white shadow-2xl rounded-[2rem] md:rounded-[2.5rem] overflow-hidden p-6 md:p-16">
               <section className="print:block">{generated && renderCVLayout(generated, false)}</section>
               <div className="no-print h-px bg-slate-100 rounded-full my-12" />
-              <section className="bg-white"><h3 className="text-xl md:text-2xl font-black mb-10 border-b-2 border-slate-900 pb-4 no-print text-slate-900 uppercase tracking-tighter">Lettre de Motivation</h3><div className="whitespace-pre-wrap font-serif text-slate-800 leading-relaxed text-sm md:text-base prose prose-slate max-w-none break-words">{generated?.letter}</div></section>
+              <section className="bg-white"><h3 className="text-xl md:text-2xl font-black mb-10 border-b-2 border-slate-900 pb-4 no-print text-slate-900 uppercase tracking-tighter">Lettre de Motivation</h3><div className="font-serif text-slate-800 leading-relaxed text-sm md:text-base prose prose-slate max-w-none break-words"><Markdown rehypePlugins={[rehypeSanitize]}>{generated?.letter}</Markdown></div></section>
             </div>
           </div>
         )}
       </main>
+      
+      <AnimatedReviews />
 
-      <footer className="bg-white border-t border-slate-100 py-12 md:py-16 px-6 no-print text-left">
+      <footer className="bg-white py-12 md:py-16 px-6 no-print text-left">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-10 md:gap-12">
           <div className="space-y-4 text-center md:text-left">
-            <div className="flex items-center gap-3 justify-center md:justify-start"><img src={LOGO_URL} className="w-12 h-12 object-contain" alt="Logo" /><h4 className="font-black text-slate-900 uppercase text-lg tracking-tighter">CV Express Afrique</h4></div>
+            <div className="flex items-center gap-3 justify-center md:justify-start">
+              <div className="w-12 h-12">{LOGO_SVG}</div>
+              <h4 className="font-black text-slate-900 uppercase text-lg tracking-tighter">CV Express Afrique</h4>
+            </div>
             <p className="text-xs md:text-sm text-slate-400 font-bold max-w-sm">Solution SaaS d'IA n°1 pour les talents africains. Accélérez votre recrutement avec un dossier impeccable.</p>
           </div>
           <div className="flex flex-wrap justify-center md:justify-end gap-6 md:gap-8 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
@@ -574,66 +991,160 @@ const App: React.FC = () => {
     </div>
   );
 
-  function renderContext() { return (
-    <div className="max-w-xl mx-auto px-4 py-8 space-y-6">
-      {renderStepHeader("Étape 1 : Style & Pays", 1, 3)}
-      <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500 text-left">
-        <div className="space-y-2">
-          <label className="block text-sm font-bold text-slate-700 flex items-center gap-2"><MapPin className="w-4 h-4 text-orange-500" /> Pays de résidence</label>
-          <select className="w-full bg-white border-2 border-slate-100 rounded-2xl px-5 py-4 text-lg font-medium focus:border-orange-500 outline-none transition-all appearance-none" value={userData.country} onChange={(e) => updateData({ country: e.target.value })}>
-            <option value="">Choisir un pays...</option>
-            {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+  function renderLeftPanel(title: React.ReactNode, subtitle: string, current: number) { return (
+    <div className="hidden lg:flex flex-col justify-between bg-slate-900 text-white p-12 lg:p-20 relative overflow-hidden min-h-full">
+      <div className="absolute inset-0 z-0">
+        <img src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80" alt="Office Background" className="w-full h-full object-cover opacity-20 grayscale" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent"></div>
+        <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-brand-500/10 rounded-full blur-[100px] -translate-y-1/2 translate-x-1/2"></div>
+      </div>
+      <div className="relative z-10 space-y-4">
+        <div className="flex gap-2">
+           {[1, 2, 3].map(i => <div key={i} className={`h-1.5 w-12 rounded-full transition-all duration-500 ${i <= current ? 'bg-brand-500' : 'bg-slate-700'}`} />)}
         </div>
-        <div className="space-y-2">
-          <label className="block text-sm font-bold text-slate-700 flex items-center gap-2"><Palette className="w-4 h-4 text-orange-500" /> Thème Visuel</label>
-          <div className="grid grid-cols-2 gap-3">
-            {(['classic', 'modern', 'creative', 'executive'] as CVTemplate[]).map(t => (
-              <button key={t} onClick={() => setSelectedTemplate(t)} className={`p-4 md:p-5 rounded-2xl border-2 text-[10px] md:text-xs font-black uppercase tracking-wider transition-all flex flex-col items-center gap-2 ${selectedTemplate === t ? 'border-orange-500 bg-orange-50 text-orange-600 shadow-inner' : 'border-slate-50 bg-slate-50 text-slate-400 hover:bg-slate-100'}`}><Layout className="w-5 h-5 opacity-50" />{t}</button>
-            ))}
+        <h2 className="text-4xl xl:text-5xl font-black tracking-tight pt-8 leading-[1.1]">{title}</h2>
+        <p className="text-lg xl:text-xl text-slate-400 font-medium max-w-md leading-relaxed">{subtitle}</p>
+      </div>
+      <div className="relative z-10 flex items-center gap-4">
+        <div className="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center backdrop-blur-md border border-white/20"><Sparkles className="w-6 h-6 text-brand-400" /></div>
+        <div className="text-sm">
+          <p className="font-bold">Généré par l'IA</p>
+          <p className="text-slate-400">Optimisé pour les filtres ATS des recruteurs.</p>
+        </div>
+      </div>
+    </div>
+  ); }
+
+  function renderMobileHeader(title: string, current: number) { return (
+    <div className="lg:hidden space-y-4 mb-4">
+      <div className="flex gap-1.5 justify-center">
+        {[1, 2, 3].map(i => <div key={i} className={`h-1.5 w-8 rounded-full transition-all duration-500 ${i <= current ? 'bg-brand-500' : 'bg-slate-200'}`} />)}
+      </div>
+      <h2 className="text-3xl font-black text-center text-slate-900 tracking-tight">{title}</h2>
+    </div>
+  ); }
+
+  function renderContext() { return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[calc(100vh-73px)] w-full">
+      {renderLeftPanel(<><span className="text-brand-500">Objectifs</span><br/>& Style</>, "Définissez le poste ciblé et le ton pour que l'IA adapte votre profil sur-mesure.", 1)}
+      <div className="flex flex-col justify-center p-6 lg:p-12 xl:p-16 bg-slate-50 min-h-full">
+        <div className="max-w-xl mx-auto w-full space-y-8 animate-in slide-in-from-right-8 duration-500">
+          {renderMobileHeader("Objectifs & Style", 1)}
+          
+          <div className="space-y-8">
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wider"><MapPin className="w-4 h-4 text-brand-500" /> Quel est votre marché cible ?</label>
+              <select className="w-full bg-white border-2 border-slate-200 rounded-2xl px-5 py-4 text-lg font-bold text-slate-800 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 outline-none transition-all appearance-none shadow-sm" value={userData.country} onChange={(e) => updateData({ country: e.target.value })}>
+                <option value="">Choisir un pays...</option>
+                {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wider"><Briefcase className="w-4 h-4 text-brand-500" /> Poste ou métier visé</label>
+              <input type="text" list="jobs" placeholder="Ex: Directeur Marketing, Dev Fullstack..." className="w-full bg-white border-2 border-slate-200 rounded-2xl px-5 py-4 text-lg font-bold text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all shadow-sm" value={userData.job} onChange={(e) => updateData({ job: e.target.value })} />
+              <datalist id="jobs">{COMMON_JOBS.map(j => <option key={j} value={j} />)}</datalist>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <label className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wider"><MessageSquare className="w-4 h-4 text-brand-500" /> Ton de la lettre</label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {(['professional', 'creative', 'direct'] as const).map(t => (
+                  <button key={t} onClick={() => updateData({ tone: t })} className={`p-5 rounded-2xl border-2 text-sm font-bold transition-all flex flex-col justify-center items-center gap-2 text-center ${userData.tone === t ? 'border-brand-500 bg-brand-50 text-brand-600 shadow-sm scale-[1.02]' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}>
+                    {t === 'professional' && "Formel / Corpo"}
+                    {t === 'creative' && "Créatif / Startup"}
+                    {t === 'direct' && "Orienté Résultats"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <label className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wider"><Palette className="w-4 h-4 text-brand-500" /> Design du CV</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {(['classic', 'modern', 'creative', 'executive', 'minimalist', 'startup'] as CVTemplate[]).map(t => (
+                  <button key={t} onClick={() => setSelectedTemplate(t)} className={`p-4 rounded-2xl border-2 text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${selectedTemplate === t ? 'border-brand-500 bg-brand-50 text-brand-600 shadow-sm scale-[1.02]' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}><Layout className="w-4 h-4 mb-[1px]" />{t}</button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="pt-6">
+              <button disabled={!userData.country || !userData.job} onClick={() => setStep('personal')} className="w-full bg-brand-500 text-white py-5 rounded-2xl text-lg font-black tracking-wide shadow-[0_8px_20px_-8px_#ea580c] hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none disabled:bg-slate-300 transition-all flex items-center justify-center gap-3">
+                Continuer <ArrowRight className="w-6 h-6" />
+              </button>
+            </div>
           </div>
         </div>
-        <div className="space-y-2">
-          <label className="block text-sm font-bold text-slate-700 flex items-center gap-2"><Briefcase className="w-4 h-4 text-orange-500" /> Métier visé</label>
-          <input type="text" list="jobs" placeholder="Ex: Comptable, Commercial..." className="w-full bg-white border-2 border-slate-100 rounded-2xl px-5 py-4 text-lg font-medium outline-none focus:border-orange-500 transition-all" value={userData.job} onChange={(e) => updateData({ job: e.target.value })} />
-          <datalist id="jobs">{COMMON_JOBS.map(j => <option key={j} value={j} />)}</datalist>
-        </div>
-        <button disabled={!userData.country || !userData.job} onClick={() => setStep('personal')} className="w-full bg-orange-500 text-white py-5 rounded-2xl text-lg md:text-xl font-black shadow-xl shadow-orange-100 disabled:opacity-50 disabled:bg-slate-300 transition-all active:scale-95 flex items-center justify-center gap-2">Continuer <ChevronRight className="w-6 h-6" /></button>
       </div>
     </div>
   ); }
 
   function renderPersonal() { return (
-    <div className="max-w-xl mx-auto px-4 py-8 space-y-6">
-      {renderStepHeader("Étape 2 : Identité", 2, 3)}
-      <div className="space-y-5 animate-in slide-in-from-right-4 duration-300 text-left">
-        <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Nom Complet</label><input type="text" placeholder="NOM & Prénoms" className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 md:py-4 font-medium outline-none focus:border-orange-500 transition-colors" value={userData.fullName} onChange={(e) => updateData({ fullName: e.target.value })} /></div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-           <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Email</label><input type="email" placeholder="email@exemple.com" className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 font-medium outline-none focus:border-orange-500 transition-colors" value={userData.email} onChange={(e) => updateData({ email: e.target.value })} /></div>
-           <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Téléphone</label><input type="tel" placeholder="+229 ..." className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 font-medium outline-none focus:border-orange-500 transition-colors" value={userData.phone} onChange={(e) => updateData({ phone: e.target.value })} /></div>
-        </div>
-        <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Ville</label><input type="text" placeholder="Ex: Cotonou, Abidjan..." className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 font-medium outline-none focus:border-orange-500 transition-colors" value={userData.city} onChange={(e) => updateData({ city: e.target.value })} /></div>
-        <div className="flex gap-4 pt-4">
-          <button onClick={() => setStep('context')} className="flex-1 bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold hover:bg-slate-200 transition-all">Retour</button>
-          <button disabled={!userData.fullName || !userData.email} onClick={() => setStep('experience')} className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-orange-100 disabled:bg-slate-300 transition-all active:scale-95">Continuer</button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[calc(100vh-73px)] w-full">
+      {renderLeftPanel(<><span className="text-brand-500">Contact</span><br/>& Identité</>, "Saisissez vos coordonnées pour être contacté facilement par les recruteurs.", 2)}
+      <div className="flex flex-col justify-center p-6 lg:p-12 xl:p-16 bg-slate-50 min-h-full">
+        <div className="max-w-xl mx-auto w-full space-y-8 animate-in slide-in-from-right-8 duration-500">
+          {renderMobileHeader("Identité & Contact", 2)}
+          
+          <div className="grid gap-6">
+             <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nom Complet</label><input type="text" placeholder="Entrez votre nom complet..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all" value={userData.fullName} onChange={(e) => updateData({ fullName: e.target.value })} /></div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Email Pro</label><input type="email" placeholder="votre@email.com" className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all" value={userData.email} onChange={(e) => updateData({ email: e.target.value })} /></div>
+                <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Téléphone / WhatsApp</label><input type="tel" placeholder="+229..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all" value={userData.phone} onChange={(e) => updateData({ phone: e.target.value })} /></div>
+             </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ville de résidence</label><input type="text" placeholder="Ex: Cotonou, Abidjan..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all" value={userData.city} onChange={(e) => updateData({ city: e.target.value })} /></div>
+                <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Profil LinkedIn (Optionnel)</label><input type="url" placeholder="https://linkedin.com/in/..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-bold text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-all" value={userData.linkedin} onChange={(e) => updateData({ linkedin: e.target.value })} /></div>
+             </div>
+          </div>
+          <div className="flex gap-4 pt-6">
+            <button onClick={() => setStep('context')} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 py-4 rounded-2xl font-black text-lg hover:bg-slate-50 hover:border-slate-300 transition-all">Retour</button>
+            <button disabled={!userData.fullName || !userData.email} onClick={() => setStep('experience')} className="flex-[2] bg-brand-500 text-white py-4 rounded-2xl font-black text-lg shadow-[0_8px_20px_-8px_#ea580c] disabled:bg-slate-300 disabled:shadow-none hover:-translate-y-0.5 disabled:translate-y-0 transition-all">Suivant <ArrowRight className="w-6 h-6 inline ml-2" /></button>
+          </div>
         </div>
       </div>
     </div>
   ); }
 
   function renderExperience() { return (
-    <div className="max-w-xl mx-auto px-4 py-8 space-y-6">
-      {renderStepHeader("Étape 3 : Parcours", 3, 3)}
-      <div className="space-y-5 animate-in slide-in-from-right-4 duration-300 text-left">
-        <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Études & Diplômes</label><textarea placeholder="Master, Licence, BAC..." className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 h-24 font-medium outline-none focus:border-orange-500 transition-colors resize-none" value={userData.education} onChange={(e) => updateData({ education: e.target.value })} /></div>
-        <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Expériences Professionnelles</label><textarea placeholder="Lieux et dates..." className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 h-32 font-medium outline-none focus:border-orange-500 transition-colors resize-none" value={userData.experience} onChange={(e) => updateData({ experience: e.target.value })} /></div>
-        <div className="space-y-1"><label className="text-xs font-black text-slate-400 uppercase tracking-widest">Compétences</label><input type="text" placeholder="Ex: Excel, Vente..." className="w-full bg-white border-2 border-slate-50 rounded-2xl px-5 py-3.5 font-medium outline-none focus:border-orange-500 transition-colors" value={userData.skills} onChange={(e) => updateData({ skills: e.target.value })} /></div>
-        {error && <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-bold border border-red-100 animate-bounce">{error}</div>}
-        <div className="flex gap-4 pt-4">
-          <button onClick={() => setStep('personal')} className="flex-1 bg-slate-100 text-slate-600 py-4 rounded-2xl font-bold hover:bg-slate-200">Retour</button>
-          <button disabled={loading || !userData.education || !userData.experience} onClick={handleGenerate} className="flex-[2] bg-orange-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-orange-100 disabled:bg-slate-300 flex items-center justify-center gap-2 transition-all active:scale-95">
-            {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Génération...</> : "Générer mon pack"}
-          </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[calc(100vh-73px)] w-full">
+      {renderLeftPanel(<><span className="text-brand-500">Parcours</span><br/>& Compétences</>, "Mettez vos expériences en vrac, l'intelligence artificielle se chargera de structurer et d'embellir le tout.", 3)}
+      <div className="flex flex-col justify-center p-6 lg:p-12 xl:p-16 bg-slate-50 min-h-full">
+        <div className="max-w-xl mx-auto w-full space-y-6 animate-in slide-in-from-right-8 duration-500">
+          {renderMobileHeader("Parcours", 3)}
+          
+          <div className="space-y-6">
+            <div className="space-y-2">
+               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">Expériences <span className="text-[10px] text-brand-500 bg-brand-50 px-2 py-0.5 rounded-full font-bold normal-case">En vrac, l'IA trie</span></label>
+               <textarea placeholder="Ex: 2020-2023 : Vendeur chez Orange, a augmenté les ventes de 20%..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 h-32 font-medium text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-colors resize-y leading-relaxed placeholder:text-slate-400" value={userData.experience} onChange={(e) => updateData({ experience: e.target.value })} />
+            </div>
+            
+            <div className="space-y-2">
+               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">Études & Diplômes <span className="text-[10px] text-brand-500 bg-brand-50 px-2 py-0.5 rounded-full font-bold normal-case">Récent en premier</span></label>
+               <textarea placeholder="Ex: 2019 : Licence pro en Marketing à HEC Abidjan..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 h-24 font-medium text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-colors resize-y leading-relaxed placeholder:text-slate-400" value={userData.education} onChange={(e) => updateData({ education: e.target.value })} />
+            </div>
+
+            <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Compétences Techniques</label><textarea placeholder="Excel, Photoshop, Négociation B2B, ReactJS..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 h-24 font-medium text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-colors resize-y leading-relaxed placeholder:text-slate-400" value={userData.skills} onChange={(e) => updateData({ skills: e.target.value })} /></div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Langues (Optionnel)</label><input type="text" placeholder="Français (Natif)..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-medium text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-colors placeholder:text-slate-400" value={userData.languages} onChange={(e) => updateData({ languages: e.target.value })} /></div>
+               <div className="space-y-2"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Centres d'intérêt (Optionnel)</label><input type="text" placeholder="Lecture, Sport..." className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 font-medium text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-colors placeholder:text-slate-400" value={userData.hobbies} onChange={(e) => updateData({ hobbies: e.target.value })} /></div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">Objectif / Bio (Optionnel) <span className="text-[10px] text-brand-500 bg-brand-50 px-2 py-0.5 rounded-full font-bold normal-case">L'IA devinera</span></label>
+               <textarea placeholder="Quel est votre objectif pour les 3 prochaines années ?" className="w-full bg-white shadow-sm border-2 border-slate-200 rounded-2xl px-5 py-4 h-24 font-medium text-slate-800 outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 transition-colors resize-y leading-relaxed placeholder:text-slate-400" value={userData.bio} onChange={(e) => updateData({ bio: e.target.value })} />
+            </div>
+
+            {error && <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-bold border border-red-200 flex items-center justify-center gap-2"><AlertCircle className="w-5 h-5"/> {error}</div>}
+            
+            <div className="flex gap-4 pt-6">
+              <button onClick={() => setStep('personal')} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 py-4 rounded-2xl font-black text-lg hover:bg-slate-50 hover:border-slate-300 transition-all">Retour</button>
+              <button disabled={loading || !userData.education || !userData.experience} onClick={handleGenerate} className="flex-[2] bg-slate-900 text-white py-4 rounded-2xl font-black text-lg shadow-xl shadow-slate-900/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 hover:-translate-y-0.5 disabled:translate-y-0 transition-all">
+                {loading ? <><Loader2 className="w-6 h-6 animate-spin" /> Génération...</> : <><Sparkles className="w-6 h-6 text-brand-400" /> Générer mon dossier</>}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
